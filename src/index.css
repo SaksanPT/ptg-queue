@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* นำเข้าฟอนต์ Sarabun เพื่อให้แสดงผลภาษาไทยสวยงาม */
+@import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;700&display=swap');
+
+/* ตั้งค่าพื้นฐาน (Reset & Base Styles) */
+body {
+  font-family: 'Sarabun', sans-serif;
+  background-color: #f0fdf4; /* สีเขียวพาสเทลอ่อน (green-50) */
+  color: #064e3b; /* สีตัวอักษรหลักเป็นเขียวเข้ม (emerald-900) เพื่อความอ่านง่าย */
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* เพิ่ม Effect ให้ปุ่มกดดูนุ่มนวลขึ้น */
+button {
+  transition: all 0.2s ease-in-out;
+}
+
+button:active {
+  transform: scale(0.98);
+}
+
+/* Scrollbar สวยๆ (Custom Scrollbar) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9; 
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1; 
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8; 
+}
+
+/* Animation สำหรับตัววิ่ง (Marquee) ในหน้าจอ TV */
+@keyframes marquee {
+  0% { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+
+.animate-marquee {
+  display: inline-block;
+  white-space: nowrap;
+  animation: marquee 25s linear infinite;
+}
+
+/* Animation สำหรับ Highlight ในหน้า TV */
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
