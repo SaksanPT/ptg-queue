@@ -27,7 +27,7 @@ const firebaseConfig = {
   appId: "1:351203200844:web:11ff3e0a7a15539aaa09e9"
 };
 
-// ⚠️ ใส่ Gemini API Key ของคุณตรงนี้ (ถ้าต้องการใช้ฟีเจอร์ AI)
+// ⚠️ ใส่ Gemini API Key ของคุณตรงนี้
 const apiKey = ""; 
 
 // ✅ โลโก้ PTG Energy
@@ -86,11 +86,11 @@ export default function App() {
     // Routing Logic
     const handleHashChange = () => {
       const hash = window.location.hash.replace('#/', '').replace('#', '');
-      if (['kiosk', 'tv', 'admin'].includes(hash)) {
+      if (['kiosk', 'tv'].includes(hash)) {
         setActiveTab(hash);
-      } else if (['dashboard', 'trips', 'stats', 'youtube', 'history'].includes(hash)) {
+      } else if (['admin', 'dashboard', 'trips', 'stats', 'youtube', 'history'].includes(hash)) {
         setActiveTab('admin');
-        setAdminTab(hash);
+        setAdminTab(hash === 'admin' ? 'dashboard' : hash);
       } else {
         setActiveTab('home');
       }
@@ -103,7 +103,6 @@ export default function App() {
       let config = localFirebaseConfig;
       let currentAppId = 'main-station';
 
-      // ตรวจสอบสภาพแวดล้อม
       if (typeof __firebase_config !== 'undefined') {
           config = JSON.parse(__firebase_config);
           if (typeof __app_id !== 'undefined') {
@@ -139,7 +138,6 @@ export default function App() {
         });
         return () => { window.removeEventListener('hashchange', handleHashChange); unsubscribe(); };
       } else {
-        console.warn("Using offline mode (No Firebase Config)");
         setFirebaseInitialized(true); 
       }
     } catch (e) {
@@ -150,7 +148,8 @@ export default function App() {
 
   // Update Hash
   const navigateTo = (path) => { window.location.hash = `#/${path}`; };
-  
+  const changeAdminTab = (tab) => { setAdminTab(tab); window.location.hash = `#/admin`; };
+
   // --- 2. Real-time Data Listeners ---
   useEffect(() => {
     if (!user || !db) return;
@@ -218,11 +217,17 @@ export default function App() {
     utterance.rate = rate !== null ? rate : voiceRate; 
     utterance.pitch = pitch !== null ? pitch : voicePitch;
     const targetURI = forceVoiceURI || selectedVoiceURI;
-    const v = voices.find(x => x.voiceURI === targetURI);
-    if (v) u.voice = v;
-    window.speechSynthesis.speak(u);
+    let voiceToUse = voices.find(v => v.voiceURI === targetURI);
+    if (!voiceToUse) {
+        voiceToUse = voices.find(v => v.name === 'Google th-TH') || 
+                     voices.find(v => v.name === 'Google ไทย') ||
+                     voices.find(v => v.lang === 'th-TH' && v.name.includes('Google')) ||
+                     voices.find(v => v.lang === 'th-TH');
+    }
+    if (voiceToUse) utterance.voice = voiceToUse;
+    window.speechSynthesis.speak(utterance);
   };
-  
+
   const handleRateChange = (e) => setVoiceRate(parseFloat(e.target.value));
   const handlePitchChange = (e) => setVoicePitch(parseFloat(e.target.value));
   const handleVoiceChange = (e) => {
@@ -244,7 +249,6 @@ export default function App() {
     } catch (e) { console.error(e); return null; }
   };
 
-  // --- 4. Logic Functions ---
   const findTripByPlate = (input) => {
     if (!input) return null;
     const cleanInput = input.trim().toLowerCase();
@@ -280,11 +284,7 @@ export default function App() {
     return null;
   };
 
-  const extractYoutubeId = (url) => {
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
-    const match = url.match(regExp);
-    return (match && match[2].length === 11) ? match[2] : null;
-  };
+  // --- ACTIONS ---
 
   const addToQueue = async (data) => {
     if (!db) return;
@@ -299,7 +299,7 @@ export default function App() {
         
         const newQueue = {
             ...cleanData,
-            queueNumber: `Q${next.toString().padStart(3, '0')}`,
+            queueNumber: `Q${nextCounter.toString().padStart(3, '0')}`,
             status: 'waiting', 
             statusText: data.type === 'external' ? 'รอรับตั๋ว' : 'รอเรียกคิว',
             createdAt: serverTimestamp(),
@@ -365,8 +365,7 @@ export default function App() {
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'youtube'), newConfig);
   };
 
-  // --- Views ---
-
+  // --- Views (Components) ---
   const KioskView = () => {
     const [type, setType] = useState('internal');
     const [formData, setFormData] = useState({ plateNumber:'', matchedPlate:'', station:'', route:'', depot:'', name:'', company:'', dieselB7:'', gas91:'', e20:'', gas95:'', sourceSheetId:null, sourceRowId:null });
@@ -784,7 +783,7 @@ export default function App() {
           <div className="min-h-screen bg-green-50 font-sans flex flex-col">
               <header className="bg-white shadow-sm sticky top-0 z-50">
                    <div className="max-w-7xl mx-auto p-4 flex justify-between items-center">
-                        <div className="text-xl font-bold text-emerald-800 flex gap-2 cursor-pointer" onClick={()=>navigateTo('home')}><img src={LOGO_URL} className="h-8"/> PTG Admin</div>
+                        <div className="text-xl font-bold text-emerald-800 flex gap-2 cursor-pointer" onClick={()=>setActiveTab('home')}><img src={LOGO_URL} className="h-8"/> PTG Admin</div>
                         <div className="flex gap-2">
                             <button onClick={()=>setAdminSubTab('dashboard')} className={`px-3 py-2 rounded text-sm font-bold ${subTab==='dashboard'?'bg-emerald-100 text-emerald-800':'text-gray-500'}`}>คิว</button>
                             <button onClick={()=>setAdminSubTab('trips')} className={`px-3 py-2 rounded text-sm font-bold ${subTab==='trips'?'bg-emerald-100 text-emerald-800':'text-gray-500'}`}>เที่ยวรถ</button>
@@ -814,9 +813,9 @@ export default function App() {
               <img src={LOGO_URL} className="h-32 mx-auto mb-8 drop-shadow-md"/>
               <h1 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-600 to-teal-600 mb-12">PTG Smart Queue</h1>
               <div className="grid grid-cols-3 gap-6">
-                  <button onClick={()=>navigateTo('kiosk')} className="bg-white/70 p-8 rounded-2xl hover:bg-emerald-500 hover:text-white transition shadow-xl"><UserPlus size={48} className="mx-auto mb-4"/><h2 className="text-2xl font-bold">Kiosk</h2></button>
-                  <button onClick={()=>navigateTo('tv')} className="bg-white/70 p-8 rounded-2xl hover:bg-teal-500 hover:text-white transition shadow-xl"><Monitor size={48} className="mx-auto mb-4"/><h2 className="text-2xl font-bold">TV</h2></button>
-                  <button onClick={()=>navigateTo('admin')} className="bg-white/70 p-8 rounded-2xl hover:bg-green-600 hover:text-white transition shadow-xl"><Settings size={48} className="mx-auto mb-4"/><h2 className="text-2xl font-bold">Admin</h2></button>
+                  <button onClick={()=>setActiveTab('kiosk')} className="bg-white/70 p-8 rounded-2xl hover:bg-emerald-500 hover:text-white transition shadow-xl"><UserPlus size={48} className="mx-auto mb-4"/><h2 className="text-2xl font-bold">Kiosk</h2></button>
+                  <button onClick={()=>setActiveTab('tv')} className="bg-white/70 p-8 rounded-2xl hover:bg-teal-500 hover:text-white transition shadow-xl"><Monitor size={48} className="mx-auto mb-4"/><h2 className="text-2xl font-bold">TV</h2></button>
+                  <button onClick={()=>setActiveTab('admin')} className="bg-white/70 p-8 rounded-2xl hover:bg-green-600 hover:text-white transition shadow-xl"><Settings size={48} className="mx-auto mb-4"/><h2 className="text-2xl font-bold">Admin</h2></button>
               </div>
           </div>
       </div>
@@ -827,7 +826,7 @@ export default function App() {
   
   if (activeTab === 'kiosk') return <KioskView />; 
   if (activeTab === 'tv') return <TVDisplay />;
-  if (activeTab === 'admin') return <AdminPage subTab={adminSubTab} />;
+  if (activeTab === 'admin') return <AdminPage subTab={adminTab} />;
   
   return <LandingPage />;
 }
