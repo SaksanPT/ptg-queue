@@ -29,10 +29,9 @@ const firebaseConfig = {
 
 // ⚠️ ใส่ Gemini API Key ของคุณตรงนี้ (ถ้าต้องการใช้ฟีเจอร์ AI)
 const apiKey = ""; 
-// ============================================================================
 
 // ✅ โลโก้ PTG Energy
-const LOGO_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5e/PTG_Energy_Logo.svg/3840px-PTG_Energy_Logo.svg.png";
+const LOGO_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5e/PTG_Energy_Logo.svg/200px-PTG_Energy_Logo.svg.png";
 
 // --- ข้อมูลเริ่มต้น ---
 const INITIAL_HEADERS = [
@@ -108,7 +107,6 @@ export default function App() {
       if (typeof __firebase_config !== 'undefined') {
           config = JSON.parse(__firebase_config);
           if (typeof __app_id !== 'undefined') {
-            // 🔥 FIX: ล้างค่า appId ให้ไม่มีเครื่องหมาย / เพื่อป้องกัน path error
             currentAppId = __app_id.replace(/[^a-zA-Z0-9_-]/g, '_');
           }
       }
@@ -152,29 +150,31 @@ export default function App() {
 
   // Update Hash
   const navigateTo = (path) => { window.location.hash = `#/${path}`; };
-  const changeAdminTab = (tab) => { setAdminTab(tab); window.location.hash = `#/admin`; };
-
+  
   // --- 2. Real-time Data Listeners ---
   useEffect(() => {
     if (!user || !db) return;
 
+    // Helper to safe data
+    const safeData = (doc) => { const d = doc.data(); return d ? { id: doc.id, ...d } : null; };
+
     const qQueues = collection(db, 'artifacts', appId, 'public', 'data', 'queues');
     const unsubQueues = onSnapshot(qQueues, (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const data = snap.docs.map(safeData).filter(x=>x);
       data.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
       setQueues(data);
-    }, err => console.log("Q Error:", err.message));
+    }, err => console.log("Offline or Perms Error"));
 
     const qHistory = collection(db, 'artifacts', appId, 'public', 'data', 'history');
     const unsubHistory = onSnapshot(qHistory, (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const data = snap.docs.map(safeData).filter(x=>x);
       data.sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt));
       setHistory(data);
-    }, err => console.log("H Error:", err.message));
+    }, err => console.log("Offline or Perms Error"));
 
     const qSheets = collection(db, 'artifacts', appId, 'public', 'data', 'sheets');
     const unsubSheets = onSnapshot(qSheets, (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const data = snap.docs.map(safeData).filter(x=>x);
       if (data.length > 0) {
         data.sort((a, b) => a.name.localeCompare(b.name));
         setSheets(data);
@@ -183,12 +183,12 @@ export default function App() {
             return exists ? prev : data[0].id;
         });
       }
-    }, err => console.log("S Error:", err.message));
+    }, err => console.log("Offline or Perms Error"));
 
     const qYoutube = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'youtube');
     const unsubYoutube = onSnapshot(qYoutube, (docSnap) => {
         if (docSnap.exists()) setYoutubeConfig(docSnap.data());
-    }, err => console.log("Y Error:", err.message));
+    }, err => console.log("Offline or Perms Error"));
 
     return () => { unsubQueues(); unsubHistory(); unsubSheets(); unsubYoutube(); };
   }, [user, db, appId]);
@@ -218,17 +218,11 @@ export default function App() {
     utterance.rate = rate !== null ? rate : voiceRate; 
     utterance.pitch = pitch !== null ? pitch : voicePitch;
     const targetURI = forceVoiceURI || selectedVoiceURI;
-    let voiceToUse = voices.find(v => v.voiceURI === targetURI);
-    if (!voiceToUse) {
-        voiceToUse = voices.find(v => v.name === 'Google th-TH') || 
-                     voices.find(v => v.name === 'Google ไทย') ||
-                     voices.find(v => v.lang === 'th-TH' && v.name.includes('Google')) ||
-                     voices.find(v => v.lang === 'th-TH');
-    }
-    if (voiceToUse) utterance.voice = voiceToUse;
-    window.speechSynthesis.speak(utterance);
+    const v = voices.find(x => x.voiceURI === targetURI);
+    if (v) u.voice = v;
+    window.speechSynthesis.speak(u);
   };
-
+  
   const handleRateChange = (e) => setVoiceRate(parseFloat(e.target.value));
   const handlePitchChange = (e) => setVoicePitch(parseFloat(e.target.value));
   const handleVoiceChange = (e) => {
@@ -243,18 +237,14 @@ export default function App() {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }]
-        })
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
       });
-      const data = await response.json();
-      return data.candidates?.[0]?.content?.parts?.[0]?.text;
-    } catch (error) {
-      console.error("Gemini API Error:", error);
-      return null;
-    }
+      const d = await res.json();
+      return d.candidates?.[0]?.content?.parts?.[0]?.text;
+    } catch (e) { console.error(e); return null; }
   };
 
+  // --- 4. Logic Functions ---
   const findTripByPlate = (input) => {
     if (!input) return null;
     const cleanInput = input.trim().toLowerCase();
@@ -296,26 +286,22 @@ export default function App() {
     return (match && match[2].length === 11) ? match[2] : null;
   };
 
-  // --- ACTIONS ---
-
   const addToQueue = async (data) => {
     if (!db) return;
     try {
         const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'metadata');
         const configSnap = await getDoc(configRef);
         let nextCounter = 1;
-        
-        if (configSnap.exists()) {
-            nextCounter = (configSnap.data().queueCounter || 0) + 1;
-        }
+        if (configSnap.exists()) next = (configSnap.data().queueCounter || 0) + 1;
 
+        // Clean undefined values
         const cleanData = JSON.parse(JSON.stringify(data));
         
         const newQueue = {
             ...cleanData,
-            queueNumber: `Q${nextCounter.toString().padStart(3, '0')}`,
+            queueNumber: `Q${next.toString().padStart(3, '0')}`,
             status: 'waiting', 
-            statusText: data.type === 'external' ? 'รอรับตั๋ว' : 'รอเรียกคิว', 
+            statusText: data.type === 'external' ? 'รอรับตั๋ว' : 'รอเรียกคิว',
             createdAt: serverTimestamp(),
             timestamp: new Date().toISOString()
         };
@@ -324,10 +310,7 @@ export default function App() {
         await setDoc(configRef, { queueCounter: nextCounter }, { merge: true });
         
         alert(`จองคิวสำเร็จ! หมายเลขคิวของคุณคือ ${newQueue.queueNumber}`);
-    } catch (e) {
-        console.error("Error adding to queue:", e);
-        alert("เกิดข้อผิดพลาดในการจองคิว: " + e.message);
-    }
+    } catch (e) { alert("Error adding queue: " + e.message); }
   };
 
   const updateStatus = async (id, st, txt) => {
@@ -337,32 +320,31 @@ export default function App() {
     });
   };
 
-  const callQueue = async (queue) => {
+  const callQueue = async (q) => {
     window.speechSynthesis.cancel();
     speakPhrase("เชิญครับ");
-    if (queue.type === 'internal') {
-      const parts = queue.plateNumber.split('-');
+    if (q.type === 'internal') {
+      const parts = q.plateNumber.split('-');
       speakPhrase(`รถเบอร์ ${parts[0].trim()}`);
       if (parts[1]) speakPhrase(`คุณ${parts[1].trim()}`);
-      if (queue.station && queue.station !== '-') speakPhrase(`ปลายทาง ${queue.station.replace(/^[A-Z0-9]+\s*-\s*/i, '').split('-')[0]}`);
+      if (q.station && q.station !== '-') speakPhrase(`ปลายทาง ${q.station.replace(/^[A-Z0-9]+\s*-\s*/i, '').split('-')[0]}`);
       
-      if (queue.sourceTrip) {
-         try {
-             const sheetRef = doc(db, 'artifacts', appId, 'public', 'data', 'sheets', String(queue.sourceTrip.sheetId));
-             const sheetSnap = await getDoc(sheetRef);
-             if (sheetSnap.exists()) {
-                 const sheetData = sheetSnap.data();
-                 const newRows = sheetData.rows.filter(r => r.id !== queue.sourceTrip.rowId);
-                 await updateDoc(sheetRef, { rows: newRows });
-             }
-         } catch(e) { console.error("Error removing trip:", e); }
+      if (q.sourceTrip) {
+        try {
+            const sRef = doc(db, 'artifacts', appId, 'public', 'data', 'sheets', String(q.sourceTrip.sheetId));
+            const sSnap = await getDoc(sRef);
+            if (sSnap.exists()) {
+              const rows = sSnap.data().rows.filter(r => r.id !== q.sourceTrip.rowId);
+              await updateDoc(sRef, { rows });
+            }
+        } catch(e) {}
       }
     } else {
-      speakPhrase(`บริษัท ${queue.company}`);
-      speakPhrase(`รถทะเบียน ${queue.name.replace(/([ก-ฮ]+)(\d+)/, '$1 $2')}`);
+      speakPhrase(`บริษัท ${q.company}`);
+      speakPhrase(`รถทะเบียน ${q.name.replace(/([ก-ฮ]+)(\d+)/, '$1 $2')}`);
     }
     speakPhrase("รับตั๋วครับ");
-    await updateStatus(queue.id, 'called', 'กำลังเรียกคิว');
+    await updateStatus(q.id, 'called', 'กำลังเรียกคิว');
   };
 
   const completeQueue = async (q) => {
@@ -373,18 +355,9 @@ export default function App() {
   
   const skipQueue = async (id) => updateStatus(id, 'skipped', 'ข้ามคิว');
 
-  const clearHistory = async () => {
-    if(window.confirm("ยืนยันลบประวัติทั้งหมด?")) {
-       history.forEach(async (h) => {
-           await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'history', h.id));
-       });
-    }
-  }
-
   const saveSheet = async (sheetObj) => {
       if (!db) return;
-      const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'sheets', String(sheetObj.id));
-      await setDoc(docRef, sheetObj);
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sheets', String(sheetObj.id)), sheetObj);
   };
   
   const saveYoutubeConfig = async (newConfig) => {
@@ -394,191 +367,142 @@ export default function App() {
 
   // --- Views ---
 
-  const KioskPage = () => {
+  const KioskView = () => {
     const [type, setType] = useState('internal');
-    const [formData, setFormData] = useState({ plateNumber: '', matchedPlate: '', station: '', route: '', depot: '', name: '', company: '', dieselB7: '', gas91: '', e20: '', gas95: '', sourceSheetId: null, sourceRowId: null });
+    const [formData, setFormData] = useState({ plateNumber:'', matchedPlate:'', station:'', route:'', depot:'', name:'', company:'', dieselB7:'', gas91:'', e20:'', gas95:'', sourceSheetId:null, sourceRowId:null });
     const [aiLoading, setAiLoading] = useState(false);
     const [aiInput, setAiInput] = useState('');
 
-    const handlePlateChange = (e) => {
-        const val = e.target.value;
-        const trip = findTripByPlate(val);
-        setFormData({ ...formData, plateNumber: val, matchedPlate: trip?.plate||'', station: trip?.station||'', route: trip?.tripNo||'', depot: trip?.depot||'', sourceSheetId: trip?.sheetId, sourceRowId: trip?.rowId });
+    const handlePlate = (val) => {
+      const t = findTripByPlate(val);
+      setFormData({ 
+        ...formData, plateNumber: val, 
+        matchedPlate: t?.plate||'', station: t?.station||'', route: t?.tripNo||'', depot: t?.depot||'',
+        sourceSheetId: t?.sheetId||null, sourceRowId: t?.rowId||null
+      });
     };
 
-    const handleFuelChange = (field, value) => {
-        if (value === '' || /^\d*$/.test(value)) setFormData({ ...formData, [field]: value });
-    };
-
-    const handleAIMagicFill = async () => {
-        if (!aiInput.trim()) return;
-        setIsAILoading(true);
-        const result = await callGemini(`
-          ช่วยแยกข้อมูลคำสั่งซื้อน้ำมันภาษาไทยจากข้อความต่อไปนี้ให้อยู่ในรูปแบบ JSON
-          ข้อความ: "${aiInput}"
-          ต้องการฟิลด์: company, plateNumber, dieselB7, gas91, e20, gas95 (ตัวเลข)
-          ถ้าไม่มีใส่ "" หรือ 0. ตอบ JSON เท่านั้น
-        `);
-        
-        if (result) {
-          try {
-            const cleanJson = result.replace(/```json|```/g, '').trim();
-            const parsed = JSON.parse(cleanJson);
-            setFormData(prev => ({
-              ...prev,
-              company: parsed.company || prev.company,
-              name: parsed.plateNumber || prev.name,
-              dieselB7: parsed.dieselB7 ? parsed.dieselB7.toString() : prev.dieselB7,
-              gas91: parsed.gas91 ? parsed.gas91.toString() : prev.gas91,
-              e20: parsed.e20 ? parsed.e20.toString() : prev.e20,
-              gas95: parsed.gas95 ? parsed.gas95.toString() : prev.gas95,
-            }));
-            setAiInput(''); 
-          } catch (e) { alert("AI Error"); }
+    const handleMagic = async () => {
+        if(!aiInput) return; setAiLoading(true);
+        const json = await callGemini(`Extract Thai fuel order from: "${aiInput}". Fields: company, plateNumber, dieselB7, gas91, e20, gas95. Return JSON only.`);
+        if(json) {
+            try {
+                const d = JSON.parse(json.replace(/```json|```/g, '').trim());
+                setFormData(p => ({...p, company: d.company||'', name: d.plateNumber||'', dieselB7: d.dieselB7||'', gas91: d.gas91||'', e20: d.e20||'', gas95: d.gas95||'' }));
+                setAiInput('');
+            } catch(e){}
         }
-        setIsAILoading(false);
+        setAiLoading(false);
     };
 
     const submit = (e) => {
         e.preventDefault();
-        const data = { ...formData, type, station: formData.station||'-', route: formData.route||'-', depot: formData.depot||'-' };
+        let fuelList = '-', rawFuels = {};
         if(type==='external') {
-            const fuels = []; if(formData.dieselB7) fuels.push(`B7:${formData.dieselB7}`); if(formData.gas91) fuels.push(`91:${formData.gas91}`); if(formData.e20) fuels.push(`E20:${formData.e20}`); if(formData.gas95) fuels.push(`95:${formData.gas95}`);
-            data.fuelList = fuels.join(', ')||'-';
-            data.rawFuels = { dieselB7: formData.dieselB7, gas91: formData.gas91, e20: formData.e20, gas95: formData.gas95 };
+            const arr = [];
+            if(formData.dieselB7) arr.push(`B7:${formData.dieselB7}`);
+            if(formData.gas91) arr.push(`91:${formData.gas91}`);
+            if(formData.e20) arr.push(`E20:${formData.e20}`);
+            if(formData.gas95) arr.push(`95:${formData.gas95}`);
+            fuelList = arr.join(', ');
+            rawFuels = { dieselB7: formData.dieselB7, gas91: formData.gas91, e20: formData.e20, gas95: formData.gas95 };
         }
-        addToQueue(data);
-        setFormData({ plateNumber: '', matchedPlate: '', station: '', route: '', depot: '', name: '', company: '', dieselB7: '', gas91: '', e20: '', gas95: '', sourceSheetId: null, sourceRowId: null });
+        addToQueue({ 
+            type, plateNumber: formData.matchedPlate || formData.plateNumber,
+            station: formData.station||'-', route: formData.route||'-', depot: formData.depot||'-',
+            name: formData.name, company: formData.company, fuelList, rawFuels,
+            sourceTrip: (formData.sourceSheetId && formData.sourceRowId) ? { sheetId: formData.sourceSheetId, rowId: formData.sourceRowId } : null
+        });
+        setFormData({ plateNumber:'', matchedPlate:'', station:'', route:'', depot:'', name:'', company:'', dieselB7:'', gas91:'', e20:'', gas95:'', sourceSheetId:null, sourceRowId:null });
     };
 
     return (
-        <div className="min-h-screen bg-green-50 font-sans flex flex-col">
-            <header className="bg-white shadow-sm border-b py-4 border-green-100">
-                <div className="max-w-2xl mx-auto px-4 flex justify-between items-center">
-                    <div className="flex items-center gap-2 text-emerald-800 font-bold text-xl">
-                        <img src={LOGO_URL} alt="Logo" className="w-10 h-10 object-contain" />
-                        จุดรับคิวอัตโนมัติ
-                    </div>
-                    <button onClick={() => navigateTo('home')} className="text-gray-400 hover:text-gray-600 text-sm flex items-center gap-1"><Home size={14} /> หน้าหลัก</button>
-                </div>
-            </header>
-            <main className="flex-1 p-4 md:p-8">
-                <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-lg overflow-hidden">
-                    <div className="flex border-b">
-                        <button className={`flex-1 py-4 font-bold flex justify-center gap-2 ${type==='internal'?'bg-emerald-600 text-white':'bg-gray-100 text-gray-600'}`} onClick={()=>setType('internal')}><Truck/> ลูกค้าภายใน</button>
-                        <button className={`flex-1 py-4 font-bold flex justify-center gap-2 ${type==='external'?'bg-teal-600 text-white':'bg-gray-100 text-gray-600'}`} onClick={()=>setType('external')}><Users/> ลูกค้าภายนอก</button>
-                    </div>
-                    <form onSubmit={submit} className="p-8 space-y-6">
-                        {type==='internal' ? (
-                            <>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">เลขเบอร์รถ</label>
-                                    <input className="w-full p-3 border rounded text-xl" placeholder="เช่น 100" value={formData.plateNumber} onChange={handlePlateChange} required/>
-                                    {formData.matchedPlate && formData.matchedPlate!==formData.plateNumber && <div className="text-emerald-600 text-sm mt-1">เจอ: {formData.matchedPlate}</div>}
-                                    <p className="text-xs text-gray-400 mt-1">*หากไม่พบข้อมูล สามารถกดออกบัตรคิวได้ทันที</p>
-                                </div>
-                                <div className="p-4 bg-gray-50 rounded border grid grid-cols-2 gap-4">
-                                    <div><span className="text-xs text-gray-500">ปลายทาง</span><p className="font-bold">{formData.station||'-'}</p></div>
-                                    <div><span className="text-xs text-gray-500">คลัง</span><p className="font-bold">{formData.depot||'-'}</p></div>
-                                </div>
-                            </>
-                        ) : (
-                            <>
-                                <div className="bg-teal-50 p-4 rounded-lg border border-teal-200 mb-4">
-                                    <label className="block text-sm font-bold text-teal-800 mb-2 flex items-center gap-2"><Sparkles size={16} /> Magic Fill</label>
-                                    <div className="flex gap-2">
-                                        <input className="flex-1 p-2 border border-teal-200 rounded text-sm outline-none" placeholder="วางข้อความสั่งซื้อ..." value={aiInput} onChange={(e) => setAiInput(e.target.value)} />
-                                        <button type="button" onClick={handleAIMagicFill} disabled={isAILoading} className="bg-teal-600 text-white px-4 py-2 rounded text-sm whitespace-nowrap">{isAILoading ? 'Loading...' : 'AI กรอก'}</button>
-                                    </div>
-                                </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div><label className="block text-sm font-medium text-gray-700 mb-1">ทะเบียนรถ</label><input className="w-full p-3 border rounded-lg outline-none" value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} required /></div>
-                                    <div><label className="block text-sm font-medium text-gray-700 mb-1">บริษัท</label><input className="w-full p-3 border rounded-lg outline-none" value={formData.company} onChange={(e) => setFormData({...formData, company: e.target.value})} required /></div>
-                                </div>
-                                <div className="bg-green-50 p-4 rounded-lg border border-green-100 grid grid-cols-2 gap-4">
-                                    <div><label className="text-xs font-semibold text-gray-600">B7</label><input className="w-full p-2 border rounded text-right" placeholder="0" value={formData.dieselB7} onChange={(e) => handleFuelChange('dieselB7', e.target.value)}/></div>
-                                    <div><label className="text-xs font-semibold text-gray-600">91</label><input className="w-full p-2 border rounded text-right" placeholder="0" value={formData.gas91} onChange={(e) => handleFuelChange('gas91', e.target.value)}/></div>
-                                    <div><label className="text-xs font-semibold text-gray-600">E20</label><input className="w-full p-2 border rounded text-right" placeholder="0" value={formData.e20} onChange={(e) => handleFuelChange('e20', e.target.value)}/></div>
-                                    <div><label className="text-xs font-semibold text-gray-600">95</label><input className="w-full p-2 border rounded text-right" placeholder="0" value={formData.gas95} onChange={(e) => handleFuelChange('gas95', e.target.value)}/></div>
-                                </div>
-                            </>
-                        )}
-                        <button type="submit" className={`w-full py-4 rounded text-white font-bold text-xl shadow-md ${type==='internal'?'bg-emerald-600 hover:bg-emerald-700':'bg-teal-600 hover:bg-teal-700'}`}>ออกบัตรคิว</button>
-                    </form>
-                </div>
-            </main>
-        </div>
-    );
-  };
-
-  const AdminPage = () => {
-    return (
-        <div className="min-h-screen bg-green-50 font-sans flex flex-col">
-            <header className="bg-white shadow-sm sticky top-0 z-50">
-                <div className="max-w-7xl mx-auto p-4 flex justify-between items-center">
-                    <div className="flex items-center gap-2 font-bold text-xl text-emerald-800 cursor-pointer" onClick={()=>navigateTo('home')}>
-                        <img src={LOGO_URL} className="h-8"/> PTG Admin
-                    </div>
-                    <div className="flex gap-2">
-                        <button onClick={()=>setAdminSubTab('dashboard')} className={`px-3 py-2 rounded text-sm font-bold ${adminTab==='dashboard'?'bg-emerald-100 text-emerald-800':'text-gray-500'}`}>คิว</button>
-                        <button onClick={()=>setAdminSubTab('trips')} className={`px-3 py-2 rounded text-sm font-bold ${adminTab==='trips'?'bg-emerald-100 text-emerald-800':'text-gray-500'}`}>เที่ยวรถ</button>
-                        <button onClick={()=>setAdminSubTab('youtube')} className={`px-3 py-2 rounded text-sm font-bold ${adminTab==='youtube'?'bg-emerald-100 text-emerald-800':'text-gray-500'}`}>วิดีโอ</button>
-                        <button onClick={()=>setAdminSubTab('stats')} className={`px-3 py-2 rounded text-sm font-bold ${adminTab==='stats'?'bg-emerald-100 text-emerald-800':'text-gray-500'}`}>สถิติ</button>
-                        <button onClick={()=>setAdminSubTab('history')} className={`px-3 py-2 rounded text-sm font-bold ${adminTab==='history'?'bg-emerald-100 text-emerald-800':'text-gray-500'}`}>ประวัติ</button>
-                        <button onClick={()=>navigateTo('home')} className="text-red-500 px-2"><LogOut size={18}/></button>
-                    </div>
-                </div>
-            </header>
-            <main className="flex-1 p-6 max-w-7xl mx-auto w-full">
-                {adminTab==='dashboard' && <AdminDashboard/>}
-                {adminTab==='trips' && <TripManager/>}
-                {adminTab==='youtube' && <YouTubeManager/>}
-                {adminTab==='stats' && <StatsDashboard/>}
-                {adminTab==='history' && <HistoryPage/>}
-            </main>
+        <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-lg overflow-hidden">
+            <div className="flex border-b">
+                <button className={`flex-1 py-4 font-bold flex justify-center gap-2 ${type==='internal'?'bg-emerald-600 text-white':'bg-gray-100 text-gray-600'}`} onClick={()=>setType('internal')}><Truck/> ลูกค้าภายใน</button>
+                <button className={`flex-1 py-4 font-bold flex justify-center gap-2 ${type==='external'?'bg-teal-600 text-white':'bg-gray-100 text-gray-600'}`} onClick={()=>setType('external')}><Users/> ลูกค้าภายนอก</button>
+            </div>
+            <form onSubmit={submit} className="p-8 space-y-6">
+                {type==='internal' ? (
+                    <>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">เลขเบอร์รถ</label>
+                            <div className="relative">
+                                <Truck className="absolute left-3 top-3 text-gray-400" size={20}/>
+                                <input className="w-full pl-10 p-3 border rounded text-xl" placeholder="เช่น 100" value={formData.plateNumber} onChange={e=>handlePlate(e.target.value)} required/>
+                                {formData.matchedPlate && formData.matchedPlate !== formData.plateNumber && <div className="absolute right-3 top-3 text-emerald-600 font-bold flex gap-1 animate-pulse"><CheckCircle size={16}/> เจอ: {formData.matchedPlate}</div>}
+                            </div>
+                            <p className="text-xs text-gray-400 mt-1">*หากไม่พบข้อมูล สามารถกดออกบัตรคิวได้ทันที</p>
+                        </div>
+                        <div className="p-4 rounded-lg bg-emerald-50 border border-emerald-200 grid grid-cols-2 gap-4">
+                            <div><span className="text-xs text-gray-500">ปลายทาง</span><p className="font-bold text-lg text-gray-800">{formData.station||'-'}</p></div>
+                            <div><span className="text-xs text-gray-500">คลัง</span><p className="font-bold text-gray-800">{formData.depot||'-'}</p></div>
+                        </div>
+                    </>
+                ) : (
+                    <>
+                        <div className="bg-teal-50 p-4 rounded border border-teal-200 mb-4">
+                            <label className="text-sm font-bold text-teal-800 flex gap-2 mb-2"><Sparkles size={16}/> Magic Fill</label>
+                            <div className="flex gap-2">
+                                <input className="flex-1 p-2 border rounded text-sm" placeholder="วางข้อความ..." value={aiInput} onChange={e=>setAiInput(e.target.value)}/>
+                                <button type="button" onClick={handleMagic} disabled={aiLoading} className="bg-teal-600 text-white px-3 rounded text-sm">{aiLoading?'...':'AI'}</button>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div><label className="text-sm text-gray-700">ทะเบียนรถ</label><input className="w-full p-3 border rounded" value={formData.name} onChange={e=>setFormData({...formData, name: e.target.value})} required/></div>
+                            <div><label className="text-sm text-gray-700">บริษัท</label><input className="w-full p-3 border rounded" value={formData.company} onChange={e=>setFormData({...formData, company: e.target.value})} required/></div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded">
+                            {['dieselB7','gas91','e20','gas95'].map(f => (
+                                <div key={f}><label className="text-xs text-gray-600 uppercase">{f}</label><input className="w-full p-2 border rounded text-right" placeholder="0" value={formData[f]} onChange={e=> /^\d*$/.test(e.target.value) && setFormData({...formData, [f]: e.target.value})}/></div>
+                            ))}
+                        </div>
+                    </>
+                )}
+                <button type="submit" className={`w-full py-4 rounded text-white font-bold text-xl shadow-md ${type==='internal'?'bg-emerald-600 hover:bg-emerald-700':'bg-teal-600 hover:bg-teal-700'}`}>ออกบัตรคิว</button>
+            </form>
         </div>
     );
   };
 
   const AdminDashboard = () => {
-      const updateQ = async (id, st, txt) => { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'queues', id), { status: st, statusText: txt || undefined, calledAt: st==='called'?new Date().toISOString():undefined }); };
-      const completeQ = async (q) => { 
-          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'history'), { ...q, completedAt: new Date().toISOString() });
-          await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'queues', q.id));
-      };
+    const updateQ = async (id, st, txt) => { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'queues', id), { status: st, statusText: txt || undefined, calledAt: st==='called'?new Date().toISOString():undefined }); };
+    const completeQ = async (q) => { 
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'history'), { ...q, completedAt: new Date().toISOString() });
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'queues', q.id));
+    };
 
-      return (
-          <div className="space-y-6">
-              <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-2xl font-bold text-emerald-800 flex gap-2"><Settings/> จัดการคิว ({queues.filter(q=>q.status!=='called').length})</h2>
-                  <div className="flex gap-4 items-center bg-gray-100 p-2 rounded">
-                      <Speaker size={18}/>
-                      <div className="flex flex-col text-xs">
-                          <label>Speed <input type="range" min="0.5" max="1.5" step="0.1" value={voiceRate} onChange={handleRateChange}/></label>
-                          <label>Pitch <input type="range" min="0.5" max="1.5" step="0.1" value={voicePitch} onChange={handlePitchChange}/></label>
-                      </div>
-                  </div>
-              </div>
-              <div className="grid gap-4">
-                  {queues.map(q=>(
-                      <div key={q.id} className={`bg-white p-4 rounded-xl shadow-sm border-l-4 flex justify-between items-center ${q.status==='called'?'border-emerald-500':'border-teal-500'}`}>
-                          <div>
-                              <div className="text-2xl font-bold">{q.type==='internal'?q.plateNumber:q.name} <span className="text-sm font-normal bg-gray-100 px-2 rounded text-gray-500">{q.queueNumber}</span></div>
-                              <div className="text-gray-600">{q.type==='internal'?`${q.station}`:`${q.company}`}</div>
-                              <div className="text-xs text-gray-400">สถานะ: {q.statusText}</div>
-                          </div>
-                          <div className="flex gap-2">
-                              {q.type==='external' && <select className="border rounded text-sm" value={q.statusText} onChange={e=>updateQ(q.id, q.status, e.target.value)}>{EXTERNAL_STATUS_OPTIONS.map(o=><option key={o}>{o}</option>)}</select>}
-                              <button onClick={()=>callQueue(q)} className="bg-emerald-600 text-white px-4 py-2 rounded"><Mic size={16}/></button>
-                              <button onClick={()=>updateStatus(q.id,'skipped')} className="bg-orange-100 text-orange-600 px-3 py-2 rounded"><SkipForward size={16}/></button>
-                              <button onClick={()=>completeQueue(q)} className="bg-green-100 text-green-600 px-3 py-2 rounded"><CheckCircle size={16}/></button>
-                          </div>
-                      </div>
-                  ))}
-                  {queues.length===0 && <div className="text-center p-10 text-gray-400">ไม่มีคิว</div>}
-              </div>
-          </div>
-      );
+    return (
+        <div className="space-y-6">
+            <div className="flex justify-between items-center mb-4">
+                 <h2 className="text-2xl font-bold text-emerald-800 flex gap-2"><Settings/> จัดการคิว ({queues.filter(q=>q.status!=='called').length})</h2>
+                 <div className="flex gap-4 items-center bg-gray-100 p-2 rounded">
+                    <Speaker size={18}/>
+                    <div className="flex flex-col text-xs">
+                        <label>Speed <input type="range" min="0.5" max="1.5" step="0.1" value={voiceRate} onChange={handleRateChange}/></label>
+                        <label>Pitch <input type="range" min="0.5" max="1.5" step="0.1" value={voicePitch} onChange={handlePitchChange}/></label>
+                    </div>
+                 </div>
+            </div>
+            <div className="grid gap-4">
+                {queues.map(q=>(
+                    <div key={q.id} className={`bg-white p-4 rounded-xl shadow-sm border-l-4 flex justify-between items-center ${q.status==='called'?'border-emerald-500':'border-teal-500'}`}>
+                        <div>
+                            <div className="text-2xl font-bold">{q.type==='internal'?q.plateNumber:q.name} <span className="text-sm font-normal bg-gray-100 px-2 rounded text-gray-500">{q.queueNumber}</span></div>
+                            <div className="text-gray-600">{q.type==='internal'?`${q.station}`:`${q.company}`}</div>
+                            <div className="text-xs text-gray-400">สถานะ: {q.statusText}</div>
+                        </div>
+                        <div className="flex gap-2">
+                            {q.type==='external' && <select className="border rounded text-sm" value={q.statusText} onChange={e=>updateQ(q.id, q.status, e.target.value)}>{EXTERNAL_STATUS_OPTIONS.map(o=><option key={o}>{o}</option>)}</select>}
+                            <button onClick={()=>callQueue(q)} className="bg-emerald-600 text-white px-4 py-2 rounded"><Mic size={16}/></button>
+                            <button onClick={()=>updateStatus(q.id,'skipped')} className="bg-orange-100 text-orange-600 px-3 py-2 rounded"><SkipForward size={16}/></button>
+                            <button onClick={()=>completeQueue(q)} className="bg-green-100 text-green-600 px-3 py-2 rounded"><CheckCircle size={16}/></button>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
   };
 
   const TripManager = () => {
@@ -587,50 +511,26 @@ export default function App() {
 
     const handleFileUpload = (e) => {
         const file = e.target.files[0]; if(!file) return;
-        const fileExt = file.name.split('.').pop().toLowerCase();
-        if (['xlsx', 'xls'].includes(fileExt)) {
-            if (!window.XLSX) { alert("Loading Excel..."); return; }
-            const reader = new FileReader();
-            reader.onload = (evt) => {
-                const wb = window.XLSX.read(new Uint8Array(evt.target.result), {type:'array'});
-                const newSheets = wb.SheetNames.map((name, i) => {
-                    const json = window.XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1});
-                    const { headers, rows } = processSheetData(json);
-                    return rows.length > 0 ? { id: Date.now()+i, name, headers, rows } : null;
-                }).filter(Boolean);
-                if(newSheets.length){ setSheets(newSheets); setActiveSheetId(newSheets[0].id); alert("Imported"); }
-            };
-            reader.readAsArrayBuffer(file);
-        } else {
-            const reader = new FileReader();
-            reader.onload = (evt) => {
-                const rows = evt.target.result.split('\n').map(l=>l.split(',').map(c=>c.trim().replace(/^"|"$/g,'')));
-                const { headers, rows: processed } = processSheetData(rows);
-                if(processed.length){ setSheets([{ id: Date.now(), name: file.name, headers, rows: processed }]); alert("Imported"); }
-            };
-            reader.readAsText(file);
-        }
-    };
-
-    const processSheetData = (rawData) => {
-        let foundHeaders=[], newRows=[], start=false;
-        for (let i = 0; i < rawData.length; i++) {
-           const r = rawData[i].map(c=>String(c).trim());
-           if (r.includes('Trip No.') || r.includes('ชื่อลูกค้า')) {
-             start=true; foundHeaders=r;
-             continue;
-           }
-           if(start) {
-              const normalizedCells = new Array(foundHeaders.length).fill("");
-              r.forEach((cellData, cellIdx) => {
-                 if (cellIdx < foundHeaders.length) {
-                    normalizedCells[cellIdx] = cellData !== undefined ? cellData : "";
-                 }
-              });
-              newRows.push({ id: Date.now()+i+Math.random(), cells: normalizedCells });
-           }
-        }
-        return { headers: foundHeaders, rows: newRows };
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            const wb = window.XLSX.read(evt.target.result, {type:'array'});
+            const newSheets = wb.SheetNames.map((name, i) => {
+                const json = window.XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1});
+                let headers=[], rows=[], start=false;
+                json.forEach((r, idx) => {
+                    const row = r.map(c=>String(c).trim());
+                    if(!start && (row.includes('Trip No.') || row.includes('ชื่อลูกค้า'))) { start=true; headers=row; return; }
+                    if(start) {
+                         const norm = new Array(headers.length).fill('');
+                         row.forEach((v,k)=>{if(k<headers.length)norm[k]=v!==undefined?v:''});
+                         rows.push({id:Date.now()+idx, cells:norm});
+                    }
+                });
+                return rows.length ? { id:'s'+Date.now()+i, name, headers, rows } : null;
+            }).filter(Boolean);
+            if(newSheets.length) { newSheets.forEach(s=>saveSheet(s)); alert('Imported!'); }
+        };
+        reader.readAsArrayBuffer(file);
     };
 
     const updateCell = async (rowId, colIdx, val) => {
@@ -675,9 +575,9 @@ export default function App() {
                                 {r.cells.map((c,i)=>(
                                     <td key={i} className={`p-1 border border-gray-300 ${i===tripNoIdx?'w-[80px] truncate max-w-[80px]':''} ${i===plateIdx?'bg-yellow-50/50 cursor-pointer':''}`}>
                                         {i===plateIdx ? (
-                                            editingCell?.rowId===r.id && editingCell?.colIndex===i && editingCell?.sheetId===activeSheetId ? 
-                                            <input autoFocus className="w-full border-blue-500 border rounded px-1" value={editingCell.value} onChange={e=>setEditingCell({...editingCell, value:e.target.value})} onBlur={commitEdit} onKeyDown={handleEditKeyDown}/> :
-                                            <div onClick={()=>startEditing(activeSheetId,r.id,i,c)}>{c||'..'}</div>
+                                            editingCell?.rowId===r.id && editingCell?.colIndex===i ?
+                                            <input autoFocus className="w-full bg-white border-blue-500 border rounded px-1" value={editingCell.value} onChange={e=>setEditingCell({...editingCell, value:e.target.value})} onBlur={commitEdit} onKeyDown={handleEditKeyDown}/> :
+                                            <div onClick={()=>startEditing(curSheet.id, r.id, i, c)}>{c||'..'}</div>
                                         ) : <div className="truncate max-w-[200px]" title={c}>{c}</div>}
                                     </td>
                                 ))}
@@ -818,7 +718,7 @@ export default function App() {
     );
   };
 
-  const TVPage = () => {
+  const TVDisplay = () => {
     const called = queues.filter(q=>q.status==='called').sort((a,b)=>new Date(b.calledAt)-new Date(a.calledAt)).slice(0,3);
     const waiting = queues.filter(q=>q.status==='waiting').slice(0,8);
     const { mode, playlist } = youtubeConfig;
@@ -833,7 +733,10 @@ export default function App() {
     return (
         <div className="h-screen flex flex-col bg-gray-900 text-white font-sans overflow-hidden">
             <div className="bg-gradient-to-r from-emerald-900 to-teal-900 p-4 flex justify-between items-center shadow-lg z-10">
-                <h1 className="text-3xl font-bold flex items-center gap-3"><img src={LOGO_URL} className="h-12 w-12 bg-white rounded-full p-1"/> คิวรับน้ำมัน</h1>
+                <div className="flex items-center gap-4">
+                    <img src={LOGO_URL} className="h-12 w-12 object-contain bg-white rounded-full p-1"/>
+                    <h1 className="text-3xl font-bold flex gap-3">คิวรับน้ำมัน</h1>
+                </div>
                 <div className="text-2xl font-mono font-bold bg-emerald-950 px-4 py-1 rounded-lg"><Clock size={20} className="inline mr-2"/>{new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})}</div>
             </div>
             <div className="flex-1 flex overflow-hidden">
@@ -876,6 +779,35 @@ export default function App() {
     );
   };
 
+  const AdminPage = ({ subTab }) => {
+      return (
+          <div className="min-h-screen bg-green-50 font-sans flex flex-col">
+              <header className="bg-white shadow-sm sticky top-0 z-50">
+                   <div className="max-w-7xl mx-auto p-4 flex justify-between items-center">
+                        <div className="text-xl font-bold text-emerald-800 flex gap-2 cursor-pointer" onClick={()=>navigateTo('home')}><img src={LOGO_URL} className="h-8"/> PTG Admin</div>
+                        <div className="flex gap-2">
+                            <button onClick={()=>setAdminSubTab('dashboard')} className={`px-3 py-2 rounded text-sm font-bold ${subTab==='dashboard'?'bg-emerald-100 text-emerald-800':'text-gray-500'}`}>คิว</button>
+                            <button onClick={()=>setAdminSubTab('trips')} className={`px-3 py-2 rounded text-sm font-bold ${subTab==='trips'?'bg-emerald-100 text-emerald-800':'text-gray-500'}`}>เที่ยวรถ</button>
+                            <button onClick={()=>setAdminSubTab('youtube')} className={`px-3 py-2 rounded text-sm font-bold ${subTab==='youtube'?'bg-emerald-100 text-emerald-800':'text-gray-500'}`}>วิดีโอ</button>
+                            <button onClick={()=>setAdminSubTab('stats')} className={`px-3 py-2 rounded text-sm font-bold ${subTab==='stats'?'bg-emerald-100 text-emerald-800':'text-gray-500'}`}>สถิติ</button>
+                            <button onClick={()=>setAdminSubTab('history')} className={`px-3 py-2 rounded text-sm font-bold ${subTab==='history'?'bg-emerald-100 text-emerald-800':'text-gray-500'}`}>ประวัติ</button>
+                            <button onClick={()=>navigateTo('home')} className="text-red-500 px-2"><LogOut size={18}/></button>
+                        </div>
+                   </div>
+              </header>
+              <main className="flex-1 p-6 max-w-7xl mx-auto w-full">
+                  {subTab==='dashboard' && <AdminDashboard/>}
+                  {subTab==='trips' && <TripManager/>}
+                  {subTab==='youtube' && <YouTubeManager/>}
+                  {subTab==='stats' && <StatsDashboard/>}
+                  {subTab==='history' && <HistoryPage/>}
+              </main>
+          </div>
+      );
+  };
+  
+  const KioskPage = () => <KioskView />;
+  const TVPage = () => <TVDisplay />;
   const LandingPage = () => (
       <div className="min-h-screen bg-gradient-to-br from-green-100 via-emerald-100 to-teal-100 flex items-center justify-center font-sans">
           <div className="text-center">
@@ -893,9 +825,9 @@ export default function App() {
   // --- Main Render Switch ---
   if (!firebaseInitialized) return <div className="h-screen flex items-center justify-center text-emerald-600"><Loader2 size={48} className="animate-spin"/></div>;
   
-  if (activeTab === 'kiosk') return <KioskPage />; 
-  if (activeTab === 'tv') return <TVPage />;
-  if (activeTab === 'admin') return <AdminPage subTab={adminTab} />;
+  if (activeTab === 'kiosk') return <KioskView />; 
+  if (activeTab === 'tv') return <TVDisplay />;
+  if (activeTab === 'admin') return <AdminPage subTab={adminSubTab} />;
   
   return <LandingPage />;
 }
